@@ -1,0 +1,38 @@
+{
+  "PanoramaRectify": {
+    "display_name": "全景矫正",
+    "description": "将等距柱状全景图转换为可拖拽调整视角的平面透视图，并输出中心截取区域。",
+    "inputs": {
+      "panorama": {
+        "name": "全景图",
+        "tooltip": "输入 equirectangular 全景图（推荐 2:1 比例）。"
+      },
+      "yaw": {
+        "name": "水平角",
+        "tooltip": "左右旋转角度（度）。"
+      },
+      "pitch": {
+        "name": "俯仰角",
+        "tooltip": "上下旋转角度（度）。"
+      },
+      "hfov": {
+        "name": "水平视场角",
+        "tooltip": "透视视场角（度）。"
+      },
+      "output_width": {
+        "name": "保存图片宽度",
+        "tooltip": "输出保存图片的宽度。"
+      },
+      "output_height": {
+        "name": "保存图片高度",
+        "tooltip": "输出保存图片的高度。"
+      }
+    },
+    "outputs": {
+      "0": {
+        "name": "图像",
+        "tooltip": "按截屏框中心裁切后的平面图。"
+      }
+    }
+  }
+}
