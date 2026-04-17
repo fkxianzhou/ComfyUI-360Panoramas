@@ -1,13 +1,38 @@
 import math
+import os
 
+import numpy as np
 import torch
 import torch.nn.functional as F
+from PIL import Image
 
+import folder_paths
 from comfy_api.latest import ComfyAPI, ComfyExtension, io, ui
 
 api = ComfyAPI()
 MIN_PREVIEW_BASE_WIDTH = 1536
 MIN_PREVIEW_BASE_HEIGHT = 1536
+CUSTOM_SIZE_PRESET = "Custom"
+SIZE_PRESETS: dict[str, tuple[int, int]] = {
+    "1:1 (1024x1024)": (1024, 1024),
+    "2:1 (2048x1024)": (2048, 1024),
+    "4:3 (1600x1200)": (1600, 1200),
+    "16:9 (1920x1080)": (1920, 1080),
+    "21:9 (2520x1080)": (2520, 1080),
+    "9:16 (1080x1920)": (1080, 1920),
+    "3:4 (1200x1600)": (1200, 1600),
+    "1:2 (1024x2048)": (1024, 2048),
+    "1:1 (2048x2048)": (2048, 2048),
+}
+DEFAULT_SIZE_PRESET = "1:1 (1024x1024)"
+
+
+def _warn(message: str) -> None:
+    logger = getattr(api, "logger", None)
+    if logger and hasattr(logger, "warning"):
+        logger.warning(message)
+    else:
+        print(message)
 
 
 def _to_nchw(images: torch.Tensor) -> torch.Tensor:
@@ -79,6 +104,39 @@ def _build_sampling_grid(
     return torch.stack([grid_x, grid_y], dim=-1)
 
 
+def _resolve_output_size(
+    size_preset: str,
+    output_width: int,
+    output_height: int,
+) -> tuple[int, int]:
+    if size_preset != CUSTOM_SIZE_PRESET:
+        preset_size = SIZE_PRESETS.get(size_preset)
+        if preset_size is not None:
+            return preset_size
+        _warn(f"PanoramaRectify: Unknown size preset '{size_preset}', fallback to custom size.")
+    return int(output_width), int(output_height)
+
+
+def _list_input_images() -> list[str]:
+    input_dir = folder_paths.get_input_directory()
+    files = [f for f in os.listdir(input_dir) if os.path.isfile(os.path.join(input_dir, f))]
+    return sorted(folder_paths.filter_files_content_types(files, ["image"]))
+
+
+def _load_image_from_combo(image_name: str | None) -> torch.Tensor | None:
+    name = (image_name or "").strip()
+    if not name:
+        return None
+    if not folder_paths.exists_annotated_filepath(name):
+        _warn(f"PanoramaRectify: combo image not found: {name}")
+        return None
+    image_path = folder_paths.get_annotated_filepath(name)
+    with Image.open(image_path) as img:
+        image = img.convert("RGB")
+        np_image = np.array(image, dtype=np.float32) / 255.0
+    return torch.from_numpy(np_image).unsqueeze(0)
+
+
 def equirectangular_to_perspective(
     images: torch.Tensor,
     yaw_deg: float,
@@ -113,6 +171,7 @@ def equirectangular_to_perspective(
 class PanoramaRectify(io.ComfyNode):
     @classmethod
     def define_schema(cls):
+        input_images = _list_input_images()
         return io.Schema(
             node_id="PanoramaRectify",
             display_name="Panorama Rectify",
@@ -121,12 +180,26 @@ class PanoramaRectify(io.ComfyNode):
                 io.Image.Input(
                     "panorama",
                     tooltip="Input equirectangular panorama image (2:1 aspect ratio is recommended).",
+                    optional=True,
                 ),
-                io.Float.Input("yaw", default=0.0, min=-180.0, max=180.0, step=0.1),
-                io.Float.Input("pitch", default=0.0, min=-89.0, max=89.0, step=0.1),
-                io.Float.Input("hfov", default=90.0, min=30.0, max=150.0, step=0.1),
+                io.Combo.Input(
+                    "size_preset",
+                    options=[*SIZE_PRESETS.keys(), CUSTOM_SIZE_PRESET],
+                    default=DEFAULT_SIZE_PRESET,
+                ),
                 io.Int.Input("output_width", default=1024, min=128, max=4096, step=2),
                 io.Int.Input("output_height", default=1024, min=128, max=4096, step=2),
+                io.Float.Input("yaw", default=0.0, min=-1000000.0, max=1000000.0, step=0.1),
+                io.Float.Input("pitch", default=0.0, min=-1000000.0, max=1000000.0, step=0.1),
+                io.Float.Input("hfov", default=90.0, min=30.0, max=150.0, step=0.1),
+                io.Combo.Input(
+                    "image",
+                    options=input_images,
+                    default=input_images[0] if input_images else "",
+                    upload=io.UploadType.image,
+                    image_folder=io.FolderType.input,
+                    extra_dict={"image_upload": True},
+                ),
             ],
             outputs=[io.Image.Output("image")],
         )
@@ -134,21 +207,38 @@ class PanoramaRectify(io.ComfyNode):
     @classmethod
     async def execute(
         cls,
-        panorama: torch.Tensor,
-        yaw: float,
-        pitch: float,
-        hfov: float,
-        output_width: int,
-        output_height: int,
+        panorama: torch.Tensor | None = None,
+        image: str | None = None,
+        yaw: float = 0.0,
+        pitch: float = 0.0,
+        hfov: float = 90.0,
+        size_preset: str = DEFAULT_SIZE_PRESET,
+        output_width: int = 1024,
+        output_height: int = 1024,
     ):
+        if panorama is None:
+            panorama = _load_image_from_combo(image)
+            if panorama is None:
+                raise ValueError("PanoramaRectify: No panorama input linked and no selected uploaded image.")
+
+        resolved_width, resolved_height = _resolve_output_size(
+            size_preset=size_preset,
+            output_width=output_width,
+            output_height=output_height,
+        )
         _, h, w, _ = panorama.shape
         if w != h * 2:
-            api.logger.warning(
+            _warn(
                 f"PanoramaRectify: Input ratio is {w}:{h}, not standard 2:1; still processing as equirectangular."
             )
 
         await api.execution.set_progress(1, 3, preview_image=panorama[:1])
-        base_side = max(MIN_PREVIEW_BASE_WIDTH, MIN_PREVIEW_BASE_HEIGHT, int(output_width), int(output_height))
+        base_side = max(
+            MIN_PREVIEW_BASE_WIDTH,
+            MIN_PREVIEW_BASE_HEIGHT,
+            int(resolved_width),
+            int(resolved_height),
+        )
         base_w = base_side
         base_h = base_side
         projected = equirectangular_to_perspective(
@@ -161,8 +251,8 @@ class PanoramaRectify(io.ComfyNode):
         )
         await api.execution.set_progress(2, 3, preview_image=projected[:1])
 
-        cap_w = max(2, min(int(output_width), base_w))
-        cap_h = max(2, min(int(output_height), base_h))
+        cap_w = max(2, min(int(resolved_width), base_w))
+        cap_h = max(2, min(int(resolved_height), base_h))
         x0 = max(0, (base_w - cap_w) // 2)
         y0 = max(0, (base_h - cap_h) // 2)
         captured = projected[:, y0:y0 + cap_h, x0:x0 + cap_w, :]

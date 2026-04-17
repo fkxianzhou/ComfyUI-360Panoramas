@@ -7,6 +7,10 @@
         "name": "全景图",
         "tooltip": "输入 equirectangular 全景图（推荐 2:1 比例）。"
       },
+      "image": {
+        "name": "上传图片",
+        "tooltip": "使用 ComfyUI 原生图像上传/选择控件（仅在未连接全景图输入时生效）。"
+      },
       "yaw": {
         "name": "水平角",
         "tooltip": "左右旋转角度（度）。"
@@ -18,6 +22,10 @@
       "hfov": {
         "name": "水平视场角",
         "tooltip": "透视视场角（度）。"
+      },
+      "size_preset": {
+        "name": "尺寸预设",
+        "tooltip": "选择标准比例尺寸；仅在 Custom 时显示并使用下方宽高。"
       },
       "output_width": {
         "name": "保存图片宽度",
