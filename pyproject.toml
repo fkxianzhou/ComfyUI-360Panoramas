@@ -1,0 +1,15 @@
+[project]
+name = "comfyui-360panoramas"
+description = "Panorama equirectangular to perspective rectify node with interactive preview for ComfyUI."
+version = "0.1.0"
+license = { file = "LICENSE" }
+readme = "README.md"
+dependencies = []
+
+[project.urls]
+Repository = "https://github.com/fkxianzhou/ComfyUI-360Panoramas"
+
+[tool.comfy]
+PublisherId = "fkxianzhou"
+DisplayName = "ComfyUI 360 Panoramas"
+Icon = ""
