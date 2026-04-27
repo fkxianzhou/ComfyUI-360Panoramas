@@ -3,8 +3,8 @@ name: Publish ComfyUI Registry Node
 on:
   workflow_dispatch:
   push:
-    tags:
-      - "v*"
+    paths:
+      - "pyproject.toml"
 
 jobs:
   publish:
@@ -15,7 +15,35 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Check Version Change In pyproject.toml
+        id: version_check
+        shell: bash
+        run: |
+          old_version=""
+          if [ -n "${{ github.event.before }}" ] && [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
+            old_version="$(git show "${{ github.event.before }}:pyproject.toml" 2>/dev/null | sed -n 's/^version = "\(.*\)"/\1/p' | head -n1)"
+          fi
+
+          new_version="$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml | head -n1)"
+
+          if [ -z "$new_version" ]; then
+            echo "Failed to parse version from pyproject.toml"
+            exit 1
+          fi
+
+          echo "Old version: ${old_version:-<none>}"
+          echo "New version: $new_version"
+
+          if [ "$old_version" != "$new_version" ]; then
+            echo "version_changed=true" >> "$GITHUB_OUTPUT"
+            echo "Version changed, publish will run."
+          else
+            echo "version_changed=false" >> "$GITHUB_OUTPUT"
+            echo "Version not changed, publish will be skipped."
+          fi
+
       - name: Publish Custom Node
+        if: steps.version_check.outputs.version_changed == 'true'
         uses: Comfy-Org/publish-node-action@main
         with:
           personal_access_token: ${{ secrets.REGISTRY_ACCESS_TOKEN }}
